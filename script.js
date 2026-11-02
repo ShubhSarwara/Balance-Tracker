@@ -1,3 +1,79 @@
+/* --- GITHUB AUTO-SYNC CONFIGURATION --- */
+const GITHUB_TOKEN = "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";
+const GITHUB_OWNER = "ShubhSarwara"; 
+const GITHUB_REPO = "business-suite-data"; 
+const GITHUB_FILE_PATH = "data.json";
+
+async function syncWithGitHub(manual = false) {
+    if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) return;
+    try {
+        const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${GITHUB_FILE_PATH}`;
+        const response = await fetch(url, {
+            headers: { "Authorization": `token ${GITHUB_TOKEN}`, "Accept": "application/vnd.github.v3+json" }
+        });
+
+        if (response.ok) {
+            const fileData = await response.json();
+            const content = JSON.parse(atob(fileData.content));
+            
+            let updated = false;
+            Object.keys(content).forEach(key => {
+                if (key.startsWith('balanceSheetData_')) {
+                    localStorage.setItem(key, content[key]);
+                    updated = true;
+                }
+            });
+            if (updated) {
+                calculateAndSetInitialHighestBusiness();
+                loadDataByDate(true);
+                if (manual) showToast("Synced with GitHub successfully!");
+            }
+        }
+    } catch (e) {
+        console.error("GitHub Sync Pull Error:", e);
+    }
+}
+
+async function pushToGitHub() {
+    if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) return;
+    try {
+        const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${GITHUB_FILE_PATH}`;
+        let allData = {};
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key?.startsWith('balanceSheetData_')) {
+                allData[key] = localStorage.getItem(key);
+            }
+        }
+        const contentEncoded = btoa(unescape(encodeURIComponent(JSON.stringify(allData, null, 2))));
+
+        let sha = "";
+        const getRes = await fetch(url, {
+            headers: { "Authorization": `token ${GITHUB_TOKEN}`, "Accept": "application/vnd.github.v3+json" }
+        });
+        if (getRes.ok) {
+            const fileInfo = await getRes.json();
+            sha = fileInfo.sha;
+        }
+
+        await fetch(url, {
+            method: "PUT",
+            headers: {
+                "Authorization": `token ${GITHUB_TOKEN}`,
+                "Accept": "application/vnd.github.v3+json",
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                message: "Auto-sync business data",
+                content: contentEncoded,
+                sha: sha ? sha : undefined
+            })
+        });
+    } catch (e) {
+        console.error("GitHub Sync Push Error:", e);
+    }
+}
+
 function openTab(evt, tabName) {
   const tabcontent = document.getElementsByClassName("tab-content");
   for (let i = 0; i < tabcontent.length; i++) { tabcontent[i].classList.remove("active"); }
@@ -478,6 +554,8 @@ function saveData(showMsg = true) {
         propagateBalanceToFutureDates(currentlyDisplayedDate, closingBalance);
     }
 
+    pushToGitHub();
+
     const storedHighest = parseFloat(localStorage.getItem(HIGHEST_BUSINESS_KEY)) || 0; 
     if (currentDayBusiness > storedHighest) { 
         localStorage.setItem(HIGHEST_BUSINESS_KEY, currentDayBusiness); 
@@ -485,7 +563,7 @@ function saveData(showMsg = true) {
         updateHighestBusinessDisplay(); 
         showToast(`🎉 New High Score! Daily Business: ₹ ${formatBalance(currentDayBusiness)}`); 
     } 
-    if (showMsg) { playSound(); showToast("Log Saved!"); } 
+    if (showMsg) { playSound(); showToast("Log Saved & Synced!"); } 
     updateMonthlySummary(); 
 }
 
@@ -511,7 +589,7 @@ function importData(event) {
             const content = JSON.parse(e.target.result); let importCount = 0; 
             Object.keys(content).forEach(key => { if (key.startsWith('balanceSheetData_')) { localStorage.setItem(key, content[key]); importCount++; } }); 
             playSound(); showToast(`${importCount} logs imported successfully!`); 
-            calculateAndSetInitialHighestBusiness(); loadDataByDate(true); 
+            calculateAndSetInitialHighestBusiness(); loadDataByDate(true); pushToGitHub();
         } catch (err) { showToast("Import error: " + err); } 
     }; 
     reader.readAsText(file); event.target.value = ""; 
@@ -705,7 +783,7 @@ function generateTrackData() {
     playSound();
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   const greetingPopup = document.getElementById('greeting-popup');
   if (greetingPopup) { greetingPopup.classList.add('show'); setTimeout(() => { greetingPopup.classList.remove('show'); }, 2500); }
   document.querySelectorAll('.modal-overlay').forEach(overlay => { overlay.addEventListener('click', (e) => { if(e.target === overlay) { overlay.style.display = 'none'; } }); });
@@ -713,6 +791,9 @@ document.addEventListener('DOMContentLoaded', () => {
   populateStaticFilters('search-year-filter', 'search-month-filter');
   populateStaticFilters('track-year-filter', 'track-month-filter');
   loadTheme();
+  
+  await syncWithGitHub(false);
+
   loadDataByDate(true);
   calculateAndSetInitialHighestBusiness();
 });
